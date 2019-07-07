@@ -1,0 +1,59 @@
+object hackathon_2 {
+  
+  def main(args:Array[String]) 
+  {
+    val sparksession = org.apache.spark.sql.SparkSession.builder().enableHiveSupport().getOrCreate();
+    val sc = sparksession.sparkContext
+    val sqlc = sparksession.sqlContext
+
+    import sqlc.implicits._
+    
+    def masking(inp:String):String =
+    {
+      val substition = Map( 'a'->'x','b'->'y','c'->'z','d'->'l','e'->'v','f'->'u',
+          'g'->'t','h'->'s','i'->'r','j'->'q','k'->'p','l'->'o','m'->'n','n'-> 'm',
+          'o'-> 'd', 'p'-> 'k', 'q'->'j', 'r'->'i','s'->'h','t'->'g','u'->'f','v'->'e','w'->'d',
+          'x'->'c','y'->'b','z'->'a','0'->'1','1'->'1','2'->'1','3'->'1','4'->'1',
+          '5'->'1','6'->'1','7'->'1','8'->'1','9'->'1')
+          
+      val modifiedstring = inp.map(c=>substition.getOrElse(c,c))
+      return modifiedstring          
+    }
+    
+    val insured = sc.textFile("hdfs:///user/hduser/insuranceinfo1.csv");
+    val header = insured.first
+    val insureddata = insured.filter(x => !(x.contains(header)))
+    println(insureddata.count)
+    insureddata.take(3)
+    
+    val insured2 = sc.textFile("hdfs:///user/hduser/insuranceinfo2.csv");
+    val header2 = insured2.first
+    val insureddata2 = insured2.filter(x => !(x.contains(header2)))
+    println(insureddata2.count)
+    insureddata2.take(3)
+    
+    val insureddatamerged = insureddata.union(insureddata2)
+   //* insureddatamerged.cache()
+   //* insureddatamerged.persist(org.apache.spark.storage.StorageLevel.DISK_ONLY)
+    insureddatamerged.persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK_SER_2)
+    insureddatamerged.take(2)
+    val insureddatarepart = insureddatamerged.distinct.repartition(8);
+    
+    val custstates = sc.textFile("hdfs:///user/hduser/custs_states.csv");
+    val custfilter = custstates.map(x=>x.split(",")).filter(x=>(x.length==5))
+    val statesfilter = custstates.map(x=>x.split(",")).filter(x=>(x.length==2))
+    
+    val test1 = sqlc.read.option("schema","header").csv("hdfs:///user/hduser/custs_states.csv");
+    val tick = test1.toDF;
+    tick.createOrReplaceTempView("tempview")
+    
+    sqlc.udf.register("maskingudf",masking _);
+    
+    insureddatarepart.toDF("id1","id2","yr","stcd","srcnm","network","url").registerTempTable("insuredreparttable")
+    val df = sqlc.sql("select id1,id2,toUpper(concat(stcd,network)),maskingudf(ur) from insuredreparttable");
+    df.repartition(1).write.mode("overwrite").json("hdfs:///user/hduser/insureddata/insureddatajson")
+    df.repartition(1).write.mode("overwrite").parquet("hdfs:///user/hduser/insureddata/insureddataparquet")  
+    
+  }  
+  
+}
